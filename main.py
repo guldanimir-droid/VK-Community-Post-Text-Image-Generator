@@ -29,28 +29,54 @@ def get_gigachat_token():
     resp.raise_for_status()
     return resp.json()["access_token"]
 
-def generate_post_text(token):
-    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
-    topics = ["сочетание цветов", "капсульный гардероб", "тренды этого сезона", "уход за одеждой", "модные аксессуары"]
+def generate_short_post(token):
+    """Короткий совет (200-400 символов)"""
+    topics = ["сочетание цветов", "капсульный гардероб", "тренды сезона", "уход за одеждой", "модные аксессуары"]
     topic = random.choice(topics)
     prompt = (
         f"Напиши короткий полезный совет по стилю на тему: {topic}. "
         "Без лишних слов, только совет. Используй дружелюбный тон, добавь эмодзи. "
-        "Не добавляй ссылки и не упоминай другие сервисы."
+        "Не добавляй ссылки и не упоминай другие сервисы. Длина: 200-400 символов."
     )
     payload = {
         "model": "GigaChat",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.9,
-        "max_tokens": 300
+        "max_tokens": 600
     }
-    resp = requests.post(url, headers=headers, json=payload, verify=False, timeout=TIMEOUT)
+    resp = requests.post("https://gigachat.devices.sberbank.ru/api/v1/chat/completions", 
+                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+                         json=payload, verify=False, timeout=TIMEOUT)
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip()
     if not text or len(text) < 50 or "языковая модель" in text.lower():
-        print("Получен нежелательный ответ, пробуем снова...")
-        return generate_post_text(token)
+        return generate_short_post(token)
+    return text
+
+def generate_long_article(token):
+    """Длинная статья (800-1500 символов)"""
+    topics = ["как определить свой тип фигуры", "базовый гардероб на все сезоны", "история маленького черного платья",
+              "тренды предстоящего сезона", "как сочетать принты", "уход за разными тканями", "как выбрать джинсы по фигуре"]
+    topic = random.choice(topics)
+    prompt = (
+        f"Напиши небольшую статью для блога о моде на тему: {topic}. "
+        "Стиль — экспертный, но простой и дружелюбный. Разбей текст на короткие абзацы. "
+        "Добавь полезные советы, примеры. Не используй ссылки и не упоминай ботов. "
+        "Длина: 800-1500 символов. Используй эмодзи для оживления текста."
+    )
+    payload = {
+        "model": "GigaChat",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.85,
+        "max_tokens": 2000
+    }
+    resp = requests.post("https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+                         json=payload, verify=False, timeout=TIMEOUT)
+    resp.raise_for_status()
+    text = resp.json()["choices"][0]["message"]["content"].strip()
+    if not text or len(text) < 300 or "языковая модель" in text.lower():
+        return generate_long_article(token)
     return text
 
 def get_random_fashion_image():
@@ -118,32 +144,45 @@ def publish_to_vk(text, attachment):
         raise Exception(f"VK API error (wall.post): {result['error']['error_msg']}")
     return result["response"]["post_id"]
 
-def main():
-    print(f"{datetime.now()}: Начинаем создание поста...")
-    token = get_gigachat_token()
-    post_text = generate_post_text(token)
-    print("Текст сгенерирован:")
+def create_post(token, post_type):
+    if post_type == "short":
+        text = generate_short_post(token)
+        print("Сгенерирован короткий совет.")
+    else:
+        text = generate_long_article(token)
+        print("Сгенерирована статья.")
+    
     print("--- НАЧАЛО ТЕКСТА ---")
-    print(post_text)
+    print(text)
     print("--- КОНЕЦ ТЕКСТА ---")
     
     image_data = get_random_fashion_image()
     print(f"Фото получено: {image_data['url']}")
-    # Только указание автора, без ссылки на бота
     author_line = f"\n\n📷 Фото: {image_data['author_name']} / Unsplash"
-    final_text = post_text + author_line
+    final_text = text + author_line
     
     attachment = upload_photo_to_vk(image_data["url"])
     print("Фото загружено в VK.")
-    
     post_id = publish_to_vk(final_text, attachment)
     print(f"Пост опубликован! ID: {post_id}")
 
-if __name__ == "__main__":
+def main():
+    # Настройка расписания: список типов постов, которые будут публиковаться по очереди.
+    # Например: сначала короткий, потом статья, потом короткий, потом статья...
+    # Можно менять порядок вручную или оставить так.
+    schedule = ["short", "long", "short", "long", "short"]  # 3 коротких, 2 длинных в цикле
+    index = 0
     while True:
+        token = get_gigachat_token()
+        post_type = schedule[index % len(schedule)]
+        print(f"{datetime.now()}: Публикуем {post_type} пост...")
         try:
-            main()
+            create_post(token, post_type)
         except Exception as e:
             print(f"❌ Ошибка: {e}")
+        index += 1
         print("Ждём 8 часов до следующей публикации...")
         time.sleep(8 * 3600)
+
+if __name__ == "__main__":
+    main()
