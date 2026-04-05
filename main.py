@@ -32,29 +32,25 @@ def get_gigachat_token():
 def generate_post_text(token):
     url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
-    topics = ["цветовые сочетания", "капсульный гардероб", "тренды сезона", "уход за одеждой", "модные аксессуары"]
+    topics = ["сочетание цветов", "капсульный гардероб", "тренды этого сезона", "уход за одеждой", "модные аксессуары"]
     topic = random.choice(topics)
-    system_prompt = (
-        f"Ты — профессиональный SMM-менеджер сообщества о моде и стиле. "
-        f"Напиши интересный, полезный пост для ВКонтакте на тему: {topic}. "
-        "Пост должен содержать заголовок, полезный совет (3-5 предложений), "
-        "вопрос к аудитории и призыв попробовать бота @stil_snap_ai_bot. "
-        "Тон — экспертный, дружелюбный, с эмодзи. Длина — 200-400 символов."
+    prompt = (
+        f"Напиши короткий полезный совет по стилю на тему: {topic}. "
+        "Без лишних слов, только совет. Используй дружелюбный тон, добавь эмодзи. "
+        "Не добавляй ссылки и не упоминай другие сервисы."
     )
     payload = {
         "model": "GigaChat",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Создай пост на тему моды. Сегодня {datetime.now().strftime('%d.%m.%Y')}."}
-        ],
-        "temperature": 0.8,
-        "max_tokens": 800
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.9,
+        "max_tokens": 300
     }
     resp = requests.post(url, headers=headers, json=payload, verify=False, timeout=TIMEOUT)
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip()
-    if not text:
-        raise Exception("GigaChat вернул пустой текст")
+    if not text or len(text) < 50 or "языковая модель" in text.lower():
+        print("Получен нежелательный ответ, пробуем снова...")
+        return generate_post_text(token)
     return text
 
 def get_random_fashion_image():
@@ -133,6 +129,7 @@ def main():
     
     image_data = get_random_fashion_image()
     print(f"Фото получено: {image_data['url']}")
+    # Только указание автора, без ссылки на бота
     author_line = f"\n\n📷 Фото: {image_data['author_name']} / Unsplash"
     final_text = post_text + author_line
     
