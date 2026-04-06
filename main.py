@@ -30,7 +30,6 @@ def get_gigachat_token():
     return resp.json()["access_token"]
 
 def generate_short_post(token):
-    """Короткий совет (200-400 символов)"""
     topics = ["сочетание цветов", "капсульный гардероб", "тренды сезона", "уход за одеждой", "модные аксессуары"]
     topic = random.choice(topics)
     prompt = (
@@ -44,9 +43,9 @@ def generate_short_post(token):
         "temperature": 0.9,
         "max_tokens": 600
     }
-    resp = requests.post("https://gigachat.devices.sberbank.ru/api/v1/chat/completions", 
-                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
-                         json=payload, verify=False, timeout=TIMEOUT)
+    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
+    resp = requests.post(url, headers=headers, json=payload, verify=False, timeout=TIMEOUT)
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip()
     if not text or len(text) < 50 or "языковая модель" in text.lower():
@@ -54,7 +53,6 @@ def generate_short_post(token):
     return text
 
 def generate_long_article(token):
-    """Длинная статья (800-1500 символов)"""
     topics = ["как определить свой тип фигуры", "базовый гардероб на все сезоны", "история маленького черного платья",
               "тренды предстоящего сезона", "как сочетать принты", "уход за разными тканями", "как выбрать джинсы по фигуре"]
     topic = random.choice(topics)
@@ -70,9 +68,9 @@ def generate_long_article(token):
         "temperature": 0.85,
         "max_tokens": 2000
     }
-    resp = requests.post("https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
-                         json=payload, verify=False, timeout=TIMEOUT)
+    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
+    resp = requests.post(url, headers=headers, json=payload, verify=False, timeout=TIMEOUT)
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip()
     if not text or len(text) < 300 or "языковая модель" in text.lower():
@@ -129,7 +127,8 @@ def upload_photo_to_vk(image_url):
 def publish_to_vk(text, attachment):
     print("   → Публикуем пост на стене...")
     vk_url = "https://api.vk.com/method/wall.post"
-    params = {
+    # ВАЖНО: используем data=, а не params=, чтобы избежать ошибки 414 при длинном тексте
+    data = {
         "owner_id": f"-{VK_GROUP_ID}",
         "from_group": 1,
         "message": text,
@@ -137,7 +136,7 @@ def publish_to_vk(text, attachment):
         "access_token": VK_TOKEN,
         "v": "5.131"
     }
-    resp = requests.post(vk_url, params=params, timeout=TIMEOUT)
+    resp = requests.post(vk_url, data=data, timeout=TIMEOUT)
     resp.raise_for_status()
     result = resp.json()
     if "error" in result:
@@ -167,10 +166,8 @@ def create_post(token, post_type):
     print(f"Пост опубликован! ID: {post_id}")
 
 def main():
-    # Настройка расписания: список типов постов, которые будут публиковаться по очереди.
-    # Например: сначала короткий, потом статья, потом короткий, потом статья...
-    # Можно менять порядок вручную или оставить так.
-    schedule = ["short", "long", "short", "long", "short"]  # 3 коротких, 2 длинных в цикле
+    # Расписание: чередуем короткие и длинные посты
+    schedule = ["short", "long", "short", "long", "short"]
     index = 0
     while True:
         token = get_gigachat_token()
