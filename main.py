@@ -107,40 +107,52 @@ def get_random_fashion_image():
         "author_link": data["user"]["links"]["html"]
     }
 
-def upload_photo_to_vk(image_url):
-    print("   → Получаем URL для загрузки фото...")
-    get_upload_url = f"https://api.vk.com/method/photos.getWallUploadServer?group_id={VK_GROUP_ID}&access_token={VK_TOKEN}&v=5.131"
-    resp = requests.get(get_upload_url, timeout=TIMEOUT)
-    resp.raise_for_status()
-    upload_data = resp.json()
-    if "error" in upload_data:
-        raise Exception(f"VK API error (getWallUploadServer): {upload_data['error']['error_msg']}")
-    upload_url = upload_data["response"]["upload_url"]
-    print("   → Загружаем фото на сервер VK...")
-    img_data = requests.get(image_url, timeout=TIMEOUT).content
-    files = {"photo": ("image.jpg", img_data, "image/jpeg")}
-    upload_resp = requests.post(upload_url, files=files, timeout=TIMEOUT)
-    upload_resp.raise_for_status()
-    upload_result = upload_resp.json()
-    if "error" in upload_result:
-        raise Exception(f"VK API error (upload): {upload_result['error']}")
-    print("   → Сохраняем фото в альбоме сообщества...")
-    save_url = "https://api.vk.com/method/photos.saveWallPhoto"
-    params = {
-        "group_id": VK_GROUP_ID,
-        "photo": upload_result["photo"],
-        "server": upload_result["server"],
-        "hash": upload_result["hash"],
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    save_resp = requests.post(save_url, data=params, timeout=TIMEOUT)
-    save_resp.raise_for_status()
-    save_result = save_resp.json()
-    if "error" in save_result:
-        raise Exception(f"VK API error (saveWallPhoto): {save_result['error']['error_msg']}")
-    photo_info = save_result["response"][0]
-    return f"photo{photo_info['owner_id']}_{photo_info['id']}"
+def upload_photo_to_vk(image_url, retry=0):
+    try:
+        print("   → Получаем URL для загрузки фото...")
+        get_upload_url = f"https://api.vk.com/method/photos.getWallUploadServer?group_id={VK_GROUP_ID}&access_token={VK_TOKEN}&v=5.131"
+        resp = requests.get(get_upload_url, timeout=TIMEOUT)
+        resp.raise_for_status()
+        upload_data = resp.json()
+        if "error" in upload_data:
+            raise Exception(f"getWallUploadServer error: {upload_data['error']['error_msg']}")
+        upload_url = upload_data["response"]["upload_url"]
+        print(f"   → Upload URL получен")
+        
+        print("   → Загружаем фото на сервер VK...")
+        img_data = requests.get(image_url, timeout=TIMEOUT).content
+        files = {"photo": ("image.jpg", img_data, "image/jpeg")}
+        upload_resp = requests.post(upload_url, files=files, timeout=TIMEOUT)
+        upload_resp.raise_for_status()
+        upload_result = upload_resp.json()
+        if "error" in upload_result:
+            raise Exception(f"Upload error: {upload_result['error']}")
+        
+        print("   → Сохраняем фото в альбоме сообщества...")
+        save_url = "https://api.vk.com/method/photos.saveWallPhoto"
+        params = {
+            "group_id": VK_GROUP_ID,
+            "photo": upload_result["photo"],
+            "server": upload_result["server"],
+            "hash": upload_result["hash"],
+            "access_token": VK_TOKEN,
+            "v": "5.131"
+        }
+        save_resp = requests.post(save_url, data=params, timeout=TIMEOUT)
+        save_resp.raise_for_status()
+        save_result = save_resp.json()
+        if "error" in save_result:
+            raise Exception(f"saveWallPhoto error: {save_result['error']['error_msg']}")
+        photo_info = save_result["response"][0]
+        return f"photo{photo_info['owner_id']}_{photo_info['id']}"
+    except Exception as e:
+        print(f"   → Ошибка загрузки фото: {e}")
+        if retry < 2:
+            print("   → Повторная попытка через 5 секунд...")
+            time.sleep(5)
+            return upload_photo_to_vk(image_url, retry + 1)
+        else:
+            raise
 
 def publish_to_vk(text, attachment):
     print("   → Публикуем пост на стене...")
@@ -184,7 +196,9 @@ def create_post(token, post_type):
     print(f"Пост опубликован! ID: {post_id}")
 
 def main():
-    schedule = ["short", "long", "short", "long", "short"]
+    # ВРЕМЕННО: публикуем только статьи каждые 2 минуты для теста
+    # schedule = ["short", "long", "short", "long", "short"]
+    schedule = ["long"]  # временно только статьи
     index = 0
     while True:
         try:
@@ -197,8 +211,10 @@ def main():
             import traceback
             traceback.print_exc()
         index += 1
-        print("Ждём 8 часов до следующей публикации...")
-        time.sleep(8 * 3600)
+        print("Ждём 2 минуты до следующей публикации (для теста статьи)...")
+        time.sleep(120)
+        # После теста вернуть:
+        # time.sleep(8 * 3600)
 
 if __name__ == "__main__":
     main()
