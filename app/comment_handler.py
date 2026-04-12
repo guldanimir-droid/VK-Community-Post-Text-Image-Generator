@@ -7,12 +7,11 @@ import random
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Переменные окружения
 CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
 AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
 SCOPE = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
-VK_API_KEY = os.getenv("VK_API_KEY")      # Ключ доступа VK (не путать с токеном)
-GROUP_ID = os.getenv("VK_GROUP_ID")       # ID сообщества
+VK_API_KEY = os.getenv("VK_API_KEY")
+GROUP_ID = os.getenv("VK_GROUP_ID")
 
 TIMEOUT = 30
 
@@ -30,12 +29,11 @@ def get_gigachat_token():
     return resp.json()["access_token"]
 
 def generate_reply(comment_text):
-    """Генерирует ответ на комментарий через GigaChat"""
     token = get_gigachat_token()
     prompt = (
         f"Ты — администратор модного сообщества. Пользователь написал: '{comment_text}'. "
         "Придумай вежливый, дружелюбный ответ (до 150 символов). Поблагодари или дай короткий совет по стилю. "
-        "Не упоминай, что ты бот. Используй эмодзи. Ответ должен быть уместным и полезным."
+        "Не упоминай, что ты бот. Используй эмодзи."
     )
     payload = {
         "model": "GigaChat",
@@ -57,10 +55,29 @@ def generate_reply(comment_text):
         return "Спасибо за комментарий! 😊"
     return reply
 
-def get_comments():
+def get_posts():
+    url = "https://api.vk.com/method/wall.get"
+    params = {
+        "owner_id": -int(GROUP_ID),
+        "count": 5,
+        "access_token": VK_API_KEY,
+        "v": "5.131"
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
+        if "error" in resp:
+            logger.error(f"Ошибка получения постов: {resp}")
+            return []
+        return resp.get("response", {}).get("items", [])
+    except Exception as e:
+        logger.error(f"Ошибка запроса постов: {e}")
+        return []
+
+def get_comments(post_id):
     url = "https://api.vk.com/method/wall.getComments"
     params = {
         "owner_id": -int(GROUP_ID),
+        "post_id": post_id,
         "need_likes": 0,
         "count": 100,
         "access_token": VK_API_KEY,
@@ -69,7 +86,7 @@ def get_comments():
     try:
         resp = requests.get(url, params=params, timeout=TIMEOUT).json()
         if "error" in resp:
-            logger.error(f"Ошибка получения комментариев: {resp}")
+            logger.error(f"Ошибка получения комментариев поста {post_id}: {resp}")
             return []
         return resp.get("response", {}).get("items", [])
     except Exception as e:
@@ -99,19 +116,21 @@ def process_comments_loop():
     processed_ids = set()
     while True:
         try:
-            comments = get_comments()
-            for comment in comments:
-                comment_id = comment.get("id")
-                if comment_id in processed_ids:
-                    continue
-                # Не отвечаем на свои же комментарии (от сообщества)
-                if comment.get("from_id", 0) < 0:
-                    continue
-                if comment.get("text"):
-                    reply = generate_reply(comment["text"])
-                    reply_to_comment(comment_id, comment["post_id"], reply)
-                    processed_ids.add(comment_id)
-                    time.sleep(3)  # пауза между ответами
+            posts = get_posts()
+            for post in posts:
+                post_id = post["id"]
+                comments = get_comments(post_id)
+                for comment in comments:
+                    comment_id = comment.get("id")
+                    if comment_id in processed_ids:
+                        continue
+                    if comment.get("from_id", 0) < 0:
+                        continue
+                    if comment.get("text"):
+                        reply = generate_reply(comment["text"])
+                        reply_to_comment(comment_id, post_id, reply)
+                        processed_ids.add(comment_id)
+                        time.sleep(3)
         except Exception as e:
             logger.error(f"Ошибка в цикле обработки комментариев: {e}")
-        time.sleep(60)  # проверяем раз в минуту
+        time.sleep(60)
