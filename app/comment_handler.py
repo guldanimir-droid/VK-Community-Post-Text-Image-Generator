@@ -57,7 +57,7 @@ def generate_reply(comment_text):
         return "Спасибо за комментарий! 😊"
     return reply
 
-def get_comments(last_comment_id=0):
+def get_comments():
     url = "https://api.vk.com/method/wall.getComments"
     params = {
         "owner_id": -int(GROUP_ID),
@@ -104,7 +104,7 @@ def process_comments_loop():
                 comment_id = comment.get("id")
                 if comment_id in processed_ids:
                     continue
-                # Не отвечаем на свои же комментарии
+                # Не отвечаем на свои же комментарии (от сообщества)
                 if comment.get("from_id", 0) < 0:
                     continue
                 if comment.get("text"):
