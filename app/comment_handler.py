@@ -2,7 +2,6 @@ import time
 import requests
 import os
 import logging
-import random
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -10,7 +9,7 @@ logger = logging.getLogger(__name__)
 CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
 AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
 SCOPE = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
-VK_API_KEY = os.getenv("VK_API_KEY")
+VK_API_KEY = os.getenv("VK_API_KEY")      # Ключ доступа VK API (с правами на чтение комментариев)
 GROUP_ID = os.getenv("VK_GROUP_ID")
 
 TIMEOUT = 30
@@ -33,7 +32,7 @@ def generate_reply(comment_text):
     prompt = (
         f"Ты — администратор модного сообщества. Пользователь написал: '{comment_text}'. "
         "Придумай вежливый, дружелюбный ответ (до 150 символов). Поблагодари или дай короткий совет по стилю. "
-        "Не упоминай, что ты бот. Используй эмодзи."
+        "Не упоминай, что ты бот. Используй эмодзи. Ответ должен быть уместным и полезным."
     )
     payload = {
         "model": "GigaChat",
@@ -55,82 +54,71 @@ def generate_reply(comment_text):
         return "Спасибо за комментарий! 😊"
     return reply
 
-def get_posts():
+def get_recent_posts(count=5):
     url = "https://api.vk.com/method/wall.get"
     params = {
-        "owner_id": -int(GROUP_ID),
-        "count": 5,
+        "owner_id": f"-{GROUP_ID}",
+        "count": count,
         "access_token": VK_API_KEY,
         "v": "5.131"
     }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка получения постов: {resp}")
-            return []
-        return resp.get("response", {}).get("items", [])
-    except Exception as e:
-        logger.error(f"Ошибка запроса постов: {e}")
+    resp = requests.get(url, params=params, timeout=TIMEOUT).json()
+    if "error" in resp:
+        logger.error(f"Ошибка получения постов: {resp}")
         return []
+    return resp.get("response", {}).get("items", [])
 
-def get_comments(post_id):
+def get_comments_for_post(post_id):
     url = "https://api.vk.com/method/wall.getComments"
     params = {
-        "owner_id": -int(GROUP_ID),
+        "owner_id": f"-{GROUP_ID}",
         "post_id": post_id,
-        "need_likes": 0,
         "count": 100,
         "access_token": VK_API_KEY,
         "v": "5.131"
     }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка получения комментариев поста {post_id}: {resp}")
-            return []
-        return resp.get("response", {}).get("items", [])
-    except Exception as e:
-        logger.error(f"Ошибка запроса комментариев: {e}")
+    resp = requests.get(url, params=params, timeout=TIMEOUT).json()
+    if "error" in resp:
+        logger.error(f"Ошибка получения комментариев для поста {post_id}: {resp}")
         return []
+    return resp.get("response", {}).get("items", [])
 
 def reply_to_comment(comment_id, post_id, message):
     url = "https://api.vk.com/method/wall.createComment"
     params = {
-        "owner_id": -int(GROUP_ID),
+        "owner_id": f"-{GROUP_ID}",
         "post_id": post_id,
         "reply_to_comment": comment_id,
         "message": message,
         "access_token": VK_API_KEY,
         "v": "5.131"
     }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка ответа: {resp}")
-        else:
-            logger.info(f"Ответили на комментарий {comment_id}")
-    except Exception as e:
-        logger.error(f"Ошибка при отправке ответа: {e}")
+    resp = requests.get(url, params=params, timeout=TIMEOUT).json()
+    if "error" in resp:
+        logger.error(f"Ошибка ответа: {resp}")
+    else:
+        logger.info(f"Ответили на комментарий {comment_id}")
 
 def process_comments_loop():
     processed_ids = set()
     while True:
         try:
-            posts = get_posts()
+            posts = get_recent_posts(count=5)
             for post in posts:
                 post_id = post["id"]
-                comments = get_comments(post_id)
+                comments = get_comments_for_post(post_id)
                 for comment in comments:
                     comment_id = comment.get("id")
                     if comment_id in processed_ids:
                         continue
+                    # Не отвечаем на свои комментарии (от сообщества)
                     if comment.get("from_id", 0) < 0:
                         continue
                     if comment.get("text"):
                         reply = generate_reply(comment["text"])
                         reply_to_comment(comment_id, post_id, reply)
                         processed_ids.add(comment_id)
-                        time.sleep(3)
+                        time.sleep(3)  # пауза между ответами
         except Exception as e:
             logger.error(f"Ошибка в цикле обработки комментариев: {e}")
-        time.sleep(60)
+        time.sleep(60)  # проверяем раз в минуту
