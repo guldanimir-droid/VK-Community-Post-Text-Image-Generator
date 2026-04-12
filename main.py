@@ -1,10 +1,12 @@
-import os
+import threading
 import time
+import logging
+import os
 import requests
 import random
-import threading
-import logging
 from datetime import datetime
+
+from comment_handler import process_comments_loop
 
 # ---------- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----------
 CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
@@ -14,18 +16,12 @@ SCOPE = "GIGACHAT_API_PERS"
 VK_TOKEN = os.getenv("VK_TOKEN")
 VK_GROUP_ID = os.getenv("VK_GROUP_ID")
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
-
-# Для комментариев и приглашений
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # опционально, для ответов
 # -----------------------------------------
 
 TIMEOUT = 30
-
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== 1. АВТОПОСТИНГ (ваш существующий код) ==========
 def get_gigachat_token():
     url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     headers = {
@@ -100,7 +96,7 @@ def get_random_fashion_image():
     }
 
 def upload_photo_to_vk(image_url):
-    print("   → Получаем URL для загрузки фото...")
+    logger.info("   → Получаем URL для загрузки фото...")
     get_upload_url = f"https://api.vk.com/method/photos.getWallUploadServer?group_id={VK_GROUP_ID}&access_token={VK_TOKEN}&v=5.131"
     resp = requests.get(get_upload_url, timeout=TIMEOUT)
     resp.raise_for_status()
@@ -108,7 +104,7 @@ def upload_photo_to_vk(image_url):
     if "error" in upload_data:
         raise Exception(f"VK API error (getWallUploadServer): {upload_data['error']['error_msg']}")
     upload_url = upload_data["response"]["upload_url"]
-    print("   → Загружаем фото на сервер VK...")
+    logger.info("   → Загружаем фото на сервер VK...")
     img_data = requests.get(image_url, timeout=TIMEOUT).content
     files = {"photo": ("image.jpg", img_data, "image/jpeg")}
     upload_resp = requests.post(upload_url, files=files, timeout=TIMEOUT)
@@ -116,7 +112,7 @@ def upload_photo_to_vk(image_url):
     upload_result = upload_resp.json()
     if "error" in upload_result:
         raise Exception(f"VK API error (upload): {upload_result['error']}")
-    print("   → Сохраняем фото в альбоме сообщества...")
+    logger.info("   → Сохраняем фото в альбоме сообщества...")
     save_url = "https://api.vk.com/method/photos.saveWallPhoto"
     params = {
         "group_id": VK_GROUP_ID,
@@ -135,7 +131,7 @@ def upload_photo_to_vk(image_url):
     return f"photo{photo_info['owner_id']}_{photo_info['id']}"
 
 def publish_to_vk(text, attachment):
-    print("   → Публикуем пост на стене...")
+    logger.info("   → Публикуем пост на стене...")
     vk_url = "https://api.vk.com/method/wall.post"
     data = {
         "owner_id": f"-{VK_GROUP_ID}",
@@ -155,205 +151,49 @@ def publish_to_vk(text, attachment):
 def create_post(token, post_type):
     if post_type == "short":
         text = generate_short_post(token)
-        print("Сгенерирован короткий совет.")
+        logger.info("Сгенерирован короткий совет.")
     else:
         text = generate_long_article(token)
-        print("Сгенерирована статья.")
+        logger.info("Сгенерирована статья.")
     
-    print("--- НАЧАЛО ТЕКСТА ---")
-    print(text)
-    print("--- КОНЕЦ ТЕКСТА ---")
+    logger.info("--- НАЧАЛО ТЕКСТА ---")
+    logger.info(text)
+    logger.info("--- КОНЕЦ ТЕКСТА ---")
     
     image_data = get_random_fashion_image()
-    print(f"Фото получено: {image_data['url']}")
+    logger.info(f"Фото получено: {image_data['url']}")
     author_line = f"\n\n📷 Фото: {image_data['author_name']} / Unsplash"
     final_text = text + author_line
     
     attachment = upload_photo_to_vk(image_data["url"])
-    print("Фото загружено в VK.")
+    logger.info("Фото загружено в VK.")
     post_id = publish_to_vk(final_text, attachment)
-    print(f"Пост опубликован! ID: {post_id}")
+    logger.info(f"Пост опубликован! ID: {post_id}")
 
 def posting_loop():
     schedule = ["short", "long", "short", "long", "short"]
     index = 0
     while True:
-        token = get_gigachat_token()
-        post_type = schedule[index % len(schedule)]
-        logger.info(f"Публикуем {post_type} пост...")
         try:
+            token = get_gigachat_token()
+            post_type = schedule[index % len(schedule)]
+            logger.info(f"{datetime.now()}: Публикуем {post_type} пост...")
             create_post(token, post_type)
         except Exception as e:
-            logger.error(f"Ошибка публикации: {e}")
+            logger.error(f"Ошибка при публикации: {e}")
         index += 1
         logger.info("Ждём 8 часов до следующей публикации...")
         time.sleep(8 * 3600)
 
-# ========== 2. АВТООТВЕТЫ НА КОММЕНТАРИИ ==========
-def get_comments():
-    url = "https://api.vk.com/method/wall.getComments"
-    params = {
-        "owner_id": f"-{VK_GROUP_ID}",
-        "need_likes": 0,
-        "count": 100,
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка получения комментариев: {resp}")
-            return []
-        return resp.get("response", {}).get("items", [])
-    except Exception as e:
-        logger.error(f"Ошибка при запросе комментариев: {e}")
-        return []
-
-def reply_to_comment(comment_id, post_id, message):
-    url = "https://api.vk.com/method/wall.createComment"
-    params = {
-        "owner_id": f"-{VK_GROUP_ID}",
-        "post_id": post_id,
-        "reply_to_comment": comment_id,
-        "message": message,
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка ответа на комментарий: {resp}")
-        else:
-            logger.info(f"Ответили на комментарий {comment_id}")
-    except Exception as e:
-        logger.error(f"Ошибка при отправке ответа: {e}")
-
-def generate_reply(comment_text):
-    if not OPENAI_API_KEY:
-        return "Спасибо за комментарий! 😊"
-    try:
-        import openai
-        openai.api_key = OPENAI_API_KEY
-        prompt = f"Ты — администратор модного сообщества. Пользователь написал: '{comment_text}'. Придумай вежливый, дружелюбный ответ (до 150 символов), поблагодари или дай короткий совет по стилю."
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0.7
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error(f"Ошибка генерации ответа: {e}")
-        return "Спасибо за комментарий! 😊"
-
-def comment_loop():
-    processed_ids = set()
-    while True:
-        comments = get_comments()
-        for comment in comments:
-            if comment["id"] not in processed_ids and comment.get("text"):
-                reply = generate_reply(comment["text"])
-                reply_to_comment(comment["id"], comment["post_id"], reply)
-                processed_ids.add(comment["id"])
-                time.sleep(3)  # пауза между ответами
-        time.sleep(60)  # проверяем каждую минуту
-
-# ========== 3. ПРИГЛАШЕНИЯ ПОЛЬЗОВАТЕЛЕЙ ==========
-def search_users(keyword, count=10):
-    url = "https://api.vk.com/method/users.search"
-    params = {
-        "q": keyword,
-        "count": count,
-        "fields": "id, first_name, last_name",
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка поиска: {resp}")
-            return []
-        return resp.get("response", {}).get("items", [])
-    except Exception as e:
-        logger.error(f"Ошибка при поиске пользователей: {e}")
-        return []
-
-def is_member(user_id):
-    url = "https://api.vk.com/method/groups.isMember"
-    params = {
-        "group_id": VK_GROUP_ID,
-        "user_id": user_id,
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            logger.error(f"Ошибка проверки членства: {resp}")
-            return False
-        return resp.get("response", 0) == 1
-    except Exception as e:
-        logger.error(f"Ошибка при проверке членства: {e}")
-        return False
-
-def invite_user(user_id):
-    url = "https://api.vk.com/method/groups.invite"
-    params = {
-        "group_id": VK_GROUP_ID,
-        "user_id": user_id,
-        "access_token": VK_TOKEN,
-        "v": "5.131"
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=TIMEOUT).json()
-        if "error" in resp:
-            error_msg = resp['error']['error_msg']
-            if "invite" in error_msg.lower() or "already" in error_msg.lower():
-                logger.info(f"Не удалось пригласить {user_id}: возможно, уже приглашён или его настройки запрещают.")
-                return False
-            else:
-                logger.error(f"Ошибка при приглашении {user_id}: {error_msg}")
-                return False
-        logger.info(f"✅ Приглашение отправлено пользователю {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка при отправке приглашения: {e}")
-        return False
-
-def invite_loop():
-    keywords = ["мода", "стиль", "одежда", "тренды", "look"]
-    invited_today = 0
-    max_per_day = 40
-    pause_seconds = 180  # 3 минуты
-    while True:
-        if invited_today >= max_per_day:
-            logger.info("Дневной лимит приглашений исчерпан. Ждём 24 часа.")
-            time.sleep(86400)
-            invited_today = 0
-        for keyword in keywords:
-            users = search_users(keyword, count=10)
-            for user in users:
-                if invited_today >= max_per_day:
-                    break
-                if is_member(user["id"]):
-                    continue
-                if invite_user(user["id"]):
-                    invited_today += 1
-                time.sleep(pause_seconds)
-            if invited_today >= max_per_day:
-                break
-        time.sleep(3600)  # пауза между циклами
-
-# ========== ЗАПУСК ВСЕХ ЗАДАЧ В ПОТОКАХ ==========
 def main():
-    logger.info("Запуск всех сервисов...")
     t1 = threading.Thread(target=posting_loop, daemon=True)
-    t2 = threading.Thread(target=comment_loop, daemon=True)
-    t3 = threading.Thread(target=invite_loop, daemon=True)
     t1.start()
+    logger.info("Автопостинг запущен.")
+
+    t2 = threading.Thread(target=process_comments_loop, daemon=True)
     t2.start()
-    t3.start()
-    # Бесконечное ожидание
+    logger.info("Обработчик комментариев запущен.")
+
     while True:
         time.sleep(3600)
 
