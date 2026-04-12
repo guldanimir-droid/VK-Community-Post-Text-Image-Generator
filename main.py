@@ -29,7 +29,7 @@ def get_gigachat_token():
     resp.raise_for_status()
     return resp.json()["access_token"]
 
-def generate_short_post(token):
+def generate_short_post(token, attempt=1):
     topics = [
         "как сочетать бежевый с другими цветами",
         "почему oversize подходит не всем",
@@ -54,13 +54,15 @@ def generate_short_post(token):
     resp = requests.post(url, headers=headers, json=payload, verify=False, timeout=TIMEOUT)
     resp.raise_for_status()
     text = resp.json()["choices"][0]["message"]["content"].strip()
-    # Защита от "безопасных" ответов
     forbidden = ["языковая модель", "генеративная", "чувствительные темы", "ограничены", "не обладают собственным мнением"]
     if any(word in text.lower() for word in forbidden) or len(text) < 50:
-        return generate_short_post(token)
+        if attempt < 3:
+            return generate_short_post(token, attempt + 1)
+        else:
+            return "Подберите базовые вещи: классические джинсы, белую рубашку и удобные кроссовки. Они всегда в моде! 😊"
     return text
 
-def generate_long_article(token):
+def generate_long_article(token, attempt=1):
     topics = [
         "как собрать капсульный гардероб на весну",
         "5 ошибок в повседневном образе",
@@ -87,7 +89,10 @@ def generate_long_article(token):
     text = resp.json()["choices"][0]["message"]["content"].strip()
     forbidden = ["языковая модель", "генеративная", "чувствительные темы", "ограничены", "не обладают собственным мнением"]
     if any(word in text.lower() for word in forbidden) or len(text) < 300:
-        return generate_long_article(token)
+        if attempt < 3:
+            return generate_long_article(token, attempt + 1)
+        else:
+            return "Капсульный гардероб: выберите 2-3 базовых цвета, добавьте акцентные вещи и качественную обувь. Это сэкономит время и деньги! 💡"
     return text
 
 def get_random_fashion_image():
@@ -162,6 +167,7 @@ def create_post(token, post_type):
     else:
         text = generate_long_article(token)
         print("Сгенерирована статья.")
+        print(f"Длина статьи: {len(text)} символов")
     
     print("--- НАЧАЛО ТЕКСТА ---")
     print(text)
@@ -181,13 +187,15 @@ def main():
     schedule = ["short", "long", "short", "long", "short"]
     index = 0
     while True:
-        token = get_gigachat_token()
-        post_type = schedule[index % len(schedule)]
-        print(f"{datetime.now()}: Публикуем {post_type} пост...")
         try:
+            token = get_gigachat_token()
+            post_type = schedule[index % len(schedule)]
+            print(f"{datetime.now()}: Публикуем {post_type} пост...")
             create_post(token, post_type)
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            print(f"❌ Ошибка при создании поста: {e}")
+            import traceback
+            traceback.print_exc()
         index += 1
         print("Ждём 8 часов до следующей публикации...")
         time.sleep(8 * 3600)
