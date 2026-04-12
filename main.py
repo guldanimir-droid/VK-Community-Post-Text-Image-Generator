@@ -142,7 +142,7 @@ def main():
             traceback.print_exc()
         index += 1
         print("Ждём 8 часов до следующей публикации...")
-        time.sleep(8 * 3600)
+        time.sleep(60)   # 1 минута для теста
 
 if __name__ == "__main__":
     main()
